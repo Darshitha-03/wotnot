@@ -11,3 +11,15 @@ __pycache__/
 *.pyc
 dist/
 .envrc
+# local env files
+.env
+*.env
+frontend/.env
+frontend/.env.local
+backend/.env
+# common
+node_modules/
+__pycache__/
+*.pyc
+dist/
+.envrc
