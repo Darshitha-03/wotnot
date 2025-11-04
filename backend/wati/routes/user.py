@@ -25,33 +25,42 @@ async def process_responses(
     db: AsyncSession = Depends(database.get_db),
     get_current_user: user.newuser = Depends(get_current_user),
 ):
+    print("Received payload:", payload)  # Debug log
+    
     sessionInfoResponse = payload.get("sessionInfoResponse")
     sdkResponse = payload.get("sdkResponse")
 
     if not sessionInfoResponse or not sdkResponse:
+        print("Missing required fields")  # Debug log
         raise HTTPException(status_code=400, detail="Missing required fields")
 
     try:
         # Parse the JSON strings
         session_info = json.loads(sessionInfoResponse)
         sdk_info = json.loads(sdkResponse)
-    except json.JSONDecodeError:
+        print("Parsed session_info:", session_info)  # Debug log
+        print("Parsed sdk_info:", sdk_info)  # Debug log
+    except json.JSONDecodeError as e:
+        print("JSON decode error:", str(e))  # Debug log
         raise HTTPException(status_code=400, detail="Invalid JSON format")
 
     # Extract necessary data
     waba_id = session_info.get("data", {}).get("waba_id")
-    # phone_id = session_info.get("data", {}).get("phone_id")
+    phone_id = session_info.get("data", {}).get("phone_number_id")
     code = sdk_info.get("authResponse", {}).get("code")
+    
+    print("Extracted data - waba_id:", waba_id, "phone_id:", phone_id, "code:", code)  # Debug log
 
     if not waba_id or not code:
+        print("Missing waba_id or code")  # Debug log
         raise HTTPException(status_code=400, detail="Invalid data received")
 
  
    
 
     current_user= await db.execute(
-        select(User.User).filter(
-            User.User.id == get_current_user.id
+        select(User).filter(
+            User.id == get_current_user.id
         )
     )
     current_user = current_user.scalars().first()
@@ -65,10 +74,11 @@ async def process_responses(
 
 
     # Exchange the code for a business token
+    import os
     token_url = "https://graph.facebook.com/v20.0/oauth/access_token"  # Use the correct version
-    client_id = "2621821927998797"  # Replace with your app's client ID
-    client_secret = "70f8ff2327df71cf505b853f0fdc4a20"  # Replace with your app's client secret
-    redirect_uri = "https://2f4d-2405-201-3004-d09d-700c-69d4-6511-ab75.ngrok-free.app/broadcast/broadcast2"  # Replace with your app's redirect URI
+    client_id = os.getenv("FACEBOOK_APP_ID")  # From environment variable
+    client_secret = os.getenv("FACEBOOK_APP_SECRET")  # Add this to your .env file
+    redirect_uri = os.getenv("REDIRECT_URI", "http://localhost:8081/broadcast/broadcast2")  # Add this to your .env file
 
     try:
         response = requests.post(
@@ -139,8 +149,8 @@ async def new_user(
     
     # Check for existing user
     result = await db.execute(
-        select(User.User).filter(
-            (User.User.email == request.email)
+        select(User).filter(
+            (User.email == request.email)
         )
     )
     existing_user = result.scalars().first()
@@ -153,7 +163,7 @@ async def new_user(
 
     # Create a new user
     api_key = secrets.token_hex(32)
-    registeruser = User.User(
+    registeruser = User(
         username=request.username,
         email=request.email,
         password_hash=hashing.Hash.bcrypt(request.password),  # Decode the hash to store it as a string
@@ -323,6 +333,14 @@ def get_business_profile(get_current_user: user.newuser = Depends(get_current_us
     Fetch the WhatsApp Business Profile details.
     """
     
+    # Check if WhatsApp Business Account credentials are configured
+    if not get_current_user.PAccessToken or not get_current_user.Phone_id:
+        return {
+            "success": False,
+            "message": "WhatsApp Business Account not configured. Please configure in Profile Settings.",
+            "data": []
+        }
+    
     BASE_URL = "https://graph.facebook.com/v17.0"
     ACCESS_TOKEN = get_current_user.PAccessToken
     PHONE_NUMBER_ID = get_current_user.Phone_id
@@ -331,8 +349,18 @@ def get_business_profile(get_current_user: user.newuser = Depends(get_current_us
         "Authorization": f"Bearer {ACCESS_TOKEN}"
     }
 
-    response = requests.get(url, headers=headers)
-    if response.status_code != 200:
-        raise HTTPException(status_code=response.status_code, detail=response.json())
-
-    return response.json()
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "message": "Failed to fetch WhatsApp profile",
+                "data": []
+            }
+        return response.json()
+    except Exception as e:
+        return {
+            "success": False,
+            "message": str(e),
+            "data": []
+        }
